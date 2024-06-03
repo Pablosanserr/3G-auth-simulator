@@ -43,9 +43,9 @@ class UIM:
     def set_parameters(self, AUTHN):
         self.AUTHN = AUTHN
         # Se extraen los parámetros de AUTHN
-        self.CON_SQN = AUTHN[:8]
-        self.AMF = AUTHN[8:10]
-        self.MAC = AUTHN[10:]
+        self.CON_SQN = AUTHN[:6]
+        self.AMF = AUTHN[6:8]
+        self.MAC = AUTHN[8:]
         
     def calc_parameters(self): # Tiene que haberse usado set_parameters previamente
         self.AK = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[:6] # Bits 0 a 47
@@ -56,8 +56,6 @@ class UIM:
             print("[UIM] El valor de la MAC generado coincide con el recibido. SQN es correcto")
         else:
             print("[UIM] ERROR: MAC generado NO coincide con el recibido")
-            print(f"MAC_ = {self.MAC_}")
-            print(f"MAC = {self.MAC}")
         # Calculamos los últimos parámetros
         self.RES = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[8:] # Bits 64 a 127
         self.CK = f3_algorithm(self.K, self.RAND, self.OPc, self.c3, self.r3)
@@ -69,11 +67,32 @@ class Movil:
         self.RAND = None
         self.AUTHN = None
         
+        self.RES = None
+        self.CK = None
+        self.IK = None
+        
     def set_RAND(self, RAND):
         self.RAND = RAND
         
-    def set_parameters(self, AUTHN_MAC):
+    def set_AUTHN(self, AUTHN):
         self.AUTHN = AUTHN
+        
+    def set_parameters(self, RES, CK, IK):
+        self.RES = RES
+        self.CK = CK
+        self.IK = IK
+        
+    def CK_ENC(self, message, iv):
+        cipher = AES.new(self.CK, AES.MODE_CTR, nonce=iv)
+        mensaje_padding = message.ljust(16, b'\0')
+        msg_enc = cipher.encrypt(mensaje_padding)
+        return msg_enc
+    
+    def IK_ENC(self, hmac, iv):
+        cipher = AES.new(self.IK, AES.MODE_CTR, nonce=iv)
+        mensaje_padding = hmac.ljust(16, b'\0')
+        hmac_enc = cipher.encrypt(mensaje_padding)
+        return hmac_enc
 
 class Antena:
     def __init__(self):
@@ -83,6 +102,12 @@ class Antena:
         self.AUTHN = None
         self.CK = None
         self.IK = None
+        
+        self.RES = None
+        
+        self.msg = None
+        self.hmac_msg = None
+        self.iv = None
     
     def set_IMSI(self, IMSI):
         self.IMSI = IMSI
@@ -93,6 +118,35 @@ class Antena:
         self.AUTHN = AUTHN
         self.CK = CK
         self.IK = IK
+        
+    def set_RES(self, RES):
+        self.RES = RES
+        
+    def check_RES(self):
+        if(self.RES == self.XRES):
+            print("[Antena] Los valores de RES y XRES coinciden. Se puede iniciar la transmisión de datos")
+            return True
+        else:
+            print("[Antena] Los valores de RES y XRES NO coinciden. No se puede iniciar la transmisión de datos")
+            return False
+        
+    def read_msg(self, msg, iv):
+        self.msg = msg
+        self.iv = iv
+
+    def CK_DEC(self):
+        cipher = AES.new(self.CK, AES.MODE_CTR, nonce=iv)
+        msg_dec = cipher.decrypt(self.msg)
+        return msg_dec
+    
+    def read_hmac(self, hmac, iv):
+        self.hmac_msg = hmac
+        self.iv = iv
+
+    def IK_DEC(self):
+        cipher = AES.new(self.IK, AES.MODE_CTR, nonce=iv)
+        hmac_msg_dec = cipher.decrypt(self.hmac_msg)
+        return hmac_msg_dec
 
 class Operador:
     def __init__(self, OPc, c1, r1, c2, r2, c3, r3, c4, r4):
@@ -175,26 +229,34 @@ antena.set_IMSI(movil.IMSI)
 operador.set_IMSI(antena.IMSI)
 
 # 3. Se generan y envían los parámetros del operador a la antena
-operador.set_IMSI(IMSI)
 IMSI, RAND, XRES, AUTHN, CK, IK = operador.get_parameters()
 antena.set_parameters(IMSI, RAND, XRES, AUTHN, CK, IK)
 
 # 4. Se envían RAND y AUTHN->MAC de la antena al móvil
 movil.set_RAND(antena.RAND)
-movil.set_parameters(antena.AUTHN)
+movil.set_AUTHN(antena.AUTHN)
 
 # 5. Se envían RAND y AUTHN->MAC del móvil al UIM
 uim.set_RAND(movil.RAND)
 uim.set_parameters(movil.AUTHN)
-uim.calc_parameters()
 
 # 6. Se generan todos los parámetros en UIM, y se envían RES, CK e IK al móvil
-
+uim.calc_parameters()
+movil.set_parameters(uim.RES, uim.CK, uim.IK)
 
 # 7. Se envía RES del móvil a la antena
+antena.set_RES(movil.RES)
 
 # 8. La antena comprueba si RES == XRES y responde con OK (al móvil)
-
-# 9. Se envía el mensaje "Hola" codificado del móvil a la antena
-
-# 10. Se envía HMAC del móvil a la antena
+if antena.check_RES():
+    # 9. Se envía el mensaje "Hola" codificado del móvil a la antena
+    iv = b'iv'
+    encrypted_msg = movil.CK_ENC(b'Hola000000000000', iv)
+    antena.read_msg(encrypted_msg, iv)
+    print(f'Mensaje cifrado: {antena.msg}')
+    print(f'Mensaje descifrado: {antena.CK_DEC()}')
+    # 10. Se envía HMAC del móvil a la antena
+    encrypted_hmac_msg = movil.IK_ENC(b'QoS0000000000000', iv)
+    antena.read_hmac(encrypted_hmac_msg, iv)
+    print(f'Mensaje HMAC cifrado: {antena.hmac_msg}')
+    print(f'Mensaje HMAC descifrado: {antena.IK_DEC()}')
