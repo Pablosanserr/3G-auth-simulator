@@ -10,11 +10,21 @@ def xor(x, y):
     return bytes(a ^ b for a, b in zip(x, y))
 
 class UIM:
-    def __init__(self, K):
+    def __init__(self, K, OPc, c1, r1, c2, r2, c3, r3, c4, r4):
+        self.c1 = c1
+        self.r1 = r1
+        self.c2 = c2
+        self.r2 = r2
+        self.c3 = c3
+        self.r3 = r3
+        self.c4 = c4
+        self.r4 = r4
+        
         self.RAND = None
         self.AUTHN = None
-        self.AUTHN_ = None
+        self.MAC_ = None
         self.K = K
+        self.OPc = OPc
         
         self.CON_SQN = None
         self.SQN = None
@@ -38,18 +48,20 @@ class UIM:
         self.MAC = AUTHN[10:]
         
     def calc_parameters(self): # Tiene que haberse usado set_parameters previamente
-        self.AK = self.f5_algorithm(self.K, self.RAND)
+        self.AK = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[:6] # Bits 0 a 47
         self.SQN = xor(self.CON_SQN, self.AK)
-        self.AUTHN_ = self.f1_algorithm(self.K, self.SQN, self.RAND, self.AMF)
-        # Se comprueba que el AUTHN generado coincide con el recibido
-        if self.AUTHN == self.AUTHN_:
-            print("[UIM] AUTHN generado coincide con el recibido. SQN es correcto")
+        self.MAC_ = f1_algorithm(self.K, self.RAND, self.OPc, self.SQN, self.AMF, self.c1, self.r1)
+        # Se comprueba que el valor de MAC generado coincide con el recibido
+        if self.MAC == self.MAC_:
+            print("[UIM] El valor de la MAC generado coincide con el recibido. SQN es correcto")
         else:
-            print("[UIM] ERROR: AUTHN generado NO coincide con el recibido")
+            print("[UIM] ERROR: MAC generado NO coincide con el recibido")
+            print(f"MAC_ = {self.MAC_}")
+            print(f"MAC = {self.MAC}")
         # Calculamos los últimos parámetros
-        self.RES = self.f2_algorithm(self.K, self.RAND)
-        self.CK = self.f3_algorithm(self.K, self.RAND)
-        self.IK = self.f4_algorithm(self.K, self.RAND)
+        self.RES = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[8:] # Bits 64 a 127
+        self.CK = f3_algorithm(self.K, self.RAND, self.OPc, self.c3, self.r3)
+        self.IK = f4_algorithm(self.K, self.RAND, self.OPc, self.c4, self.r4)
 
 class Movil:
     def __init__(self, IMSI):
@@ -83,9 +95,19 @@ class Antena:
         self.IK = IK
 
 class Operador:
-    def __init__(self):
+    def __init__(self, OPc, c1, r1, c2, r2, c3, r3, c4, r4):
+        self.c1 = c1
+        self.r1 = r1
+        self.c2 = c2
+        self.r2 = r2
+        self.c3 = c3
+        self.r3 = r3
+        self.c4 = c4
+        self.r4 = r4
+        
         self.IMSI = None
         self.RAND = None
+        self.OPc = OPc
         self.XRES = None
         self.AUTHN = None
         self.CK = None
@@ -108,18 +130,19 @@ class Operador:
             self.K = b'1234567890123456'
             self.generate_RAND()
             self.generate_SQN()
-            self.AK = self.f5_algorithm(self.K, self.RAND)
             self.AMF = (33).to_bytes(2, byteorder='big') # Corresponde al IMSI
-            self.MAC = self.f1_algorithm(self.K, self.SQN, self.RAND, self.AMF)
+            self.MAC = f1_algorithm(self.K, self.RAND, self.OPc, self.SQN, self.AMF, self.c1, self.r1)
             
             # XRES
-            self.XRES = self.f2_algorithm(self.K, self.RAND)
+            self.XRES = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[8:] # Bits 64 a 127
+            # AK
+            self.AK = f2_algorithm(self.K, self.RAND, self.OPc, self.c2, self.r2)[:6] # Bits 0 a 47
             # AUTHN
             self.CON_SQN = self.calcularCON_SQN(self.SQN, self.AK, self.K)
             self.AUTHN = self.calcularAUTHN(self.CON_SQN, self.AMF, self.MAC, self.K)
             # KEYS
-            self.CK = self.f3_algorithm(self.K, self.RAND)
-            self.IK = self.f4_algorithm(self.K, self.RAND)
+            self.CK = f3_algorithm(self.K, self.RAND, self.OPc, self.c3, self.r3)
+            self.IK = f4_algorithm(self.K, self.RAND, self.OPc, self.c4, self.r4)
         
     def generate_RAND(self):
         self.RAND = get_random_bytes(16)
@@ -135,11 +158,15 @@ class Operador:
 
 IMSI = "214050000000095"
 K = b'1234567890123456'
+OPc = b'0106202401062024'
 
-uim = UIM(K=K)
+# Obtenemos los valores de c1, r1, c2... que compartirán UIM y Operador
+c1, r1, c2, r2, c3, r3, c4, r4 = algorithms_init()
+
+uim = UIM(K=K, OPc=OPc, c1=c1, r1=r1, c2=c2, r2=r2, c3=c3, r3=r3, c4=c4, r4=r4)
 movil = Movil(IMSI=IMSI)
 antena = Antena()
-operador = Operador()
+operador = Operador(OPc=OPc, c1=c1, r1=r1, c2=c2, r2=r2, c3=c3, r3=r3, c4=c4, r4=r4)
 
 # 1. Se envía el IMSI del móvil a la antena
 antena.set_IMSI(movil.IMSI)
