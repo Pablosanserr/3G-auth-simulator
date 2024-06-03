@@ -4,60 +4,64 @@ import os
 import hmac
 import hashlib
 
+from algorithms import *
+
+def xor(x, y):
+    return bytes(a ^ b for a, b in zip(x, y))
+
 class UIM:
     def __init__(self, K):
         self.RAND = None
-        self.AUTHN_MAC = None
+        self.AUTHN = None
+        self.AUTHN_ = None
         self.K = K
-    
-    # Función MAC
-    def f1_algorithm(self, K, SQN, RAND, AMF):
-        # Concatenar los parámetros de entrada
-        data = SQN + RAND + AMF
-        # Crear un objeto HMAC utilizando la clave secreta y el algoritmo SHA-256
-        h = hmac.new(K, data, hashlib.sha256)
-        # Calcular el MAC y devolverlo
-        return h.digest()[:8] # MAC será de 64 bits (8 bytes)
-    
-    # Funciones de derivación de clave
-    def f2_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        XRES = cipher.encrypt(RAND)[:4]  # SRES será de 32 bits (4 bytes)
-        return XRES
-
-    def f3_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        CK = cipher.encrypt(RAND)[:16]  # CK será de 128 bits (16 bytes)
-        return CK
-
-    def f4_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        IK = cipher.encrypt(RAND)[:16]  # IK será de 128 bits (16 bytes)
-        return IK
-
-    def f5_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        AK = cipher.encrypt(RAND)[:6]  # AK será de 48 bits (6 bytes)
-        return AK
+        
+        self.CON_SQN = None
+        self.SQN = None
+        self.AK = None
+        self.AMF = None
+        self.MAC = None
+        
+        self.RES = None
+        self.CK = None
+        self.IK = None
         
     # Funciones de intercambio de datos        
     def set_RAND(self, RAND):
         self.RAND = RAND
         
-    def set_MAC(self, AUTHN_MAC):
-        self.AUTHN_MAC = AUTHN_MAC
+    def set_parameters(self, AUTHN):
+        self.AUTHN = AUTHN
+        # Se extraen los parámetros de AUTHN
+        self.CON_SQN = AUTHN[:8]
+        self.AMF = AUTHN[8:10]
+        self.MAC = AUTHN[10:]
+        
+    def calc_parameters(self): # Tiene que haberse usado set_parameters previamente
+        self.AK = self.f5_algorithm(self.K, self.RAND)
+        self.SQN = xor(self.CON_SQN, self.AK)
+        self.AUTHN_ = self.f1_algorithm(self.K, self.SQN, self.RAND, self.AMF)
+        # Se comprueba que el AUTHN generado coincide con el recibido
+        if self.AUTHN == self.AUTHN_:
+            print("[UIM] AUTHN generado coincide con el recibido. SQN es correcto")
+        else:
+            print("[UIM] ERROR: AUTHN generado NO coincide con el recibido")
+        # Calculamos los últimos parámetros
+        self.RES = self.f2_algorithm(self.K, self.RAND)
+        self.CK = self.f3_algorithm(self.K, self.RAND)
+        self.IK = self.f4_algorithm(self.K, self.RAND)
 
 class Movil:
     def __init__(self, IMSI):
         self.IMSI = IMSI
         self.RAND = None
-        self.AUTHN_MAC = None
+        self.AUTHN = None
         
     def set_RAND(self, RAND):
         self.RAND = RAND
         
-    def set_MAC(self, AUTHN_MAC):
-        self.AUTHN_MAC = AUTHN_MAC
+    def set_parameters(self, AUTHN_MAC):
+        self.AUTHN = AUTHN
 
 class Antena:
     def __init__(self):
@@ -90,48 +94,12 @@ class Operador:
         self.SQN = None
         self.CON_SQN = None
         
-    # Función MAC
-    def f1_algorithm(self, K, SQN, RAND, AMF):
-        # Concatenar los parámetros de entrada
-        data = SQN + RAND + AMF
-        # Crear un objeto HMAC utilizando la clave secreta y el algoritmo SHA-256
-        h = hmac.new(K, data, hashlib.sha256)
-        # Calcular el MAC y devolverlo
-        return h.digest()[:8] # MAC será de 64 bits (8 bytes)
-    
-    # Funciones de derivación de clave
-    def f2_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        XRES = cipher.encrypt(RAND)[:4]  # SRES será de 32 bits (4 bytes)
-        return XRES
-
-    def f3_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        CK = cipher.encrypt(RAND)[:16]  # CK será de 128 bits (16 bytes)
-        return CK
-
-    def f4_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        IK = cipher.encrypt(RAND)[:16]  # IK será de 128 bits (16 bytes)
-        return IK
-
-    def f5_algorithm(self, K, RAND):
-        cipher = AES.new(K, AES.MODE_ECB)
-        AK = cipher.encrypt(RAND)[:6]  # AK será de 48 bits (6 bytes)
-        return AK
-        
-    def calcularCON_SQN(self, SQN,AK,K):
-        datos = SQN + AK
-        cipher = AES.new(K, AES.MODE_ECB)
-        datos_padding = datos + b'0000' # Hay que meter relleno para que datos (12 bytes) sea de 16 bytes
-        CON_SQN = cipher.encrypt(datos_padding)[:16] # CON_SQN será de 128 bits (16 bytes)
+    def calcularCON_SQN(self, SQN, AK, K):
+        CON_SQN = xor(SQN, AK) # XOR de SQN y AK
         return CON_SQN
         
-    def calcularAUTHN(self, CON_SQN,AMF,MAC, K):
-        datos = CON_SQN + AMF + MAC
-        cipher = AES.new(K, AES.MODE_ECB)
-        datos_trunc = datos[:16] # Hay que truncar para que los datos (176 bits) ocupen 128 bits
-        AUTN = cipher.encrypt(datos_trunc)[:16] # AUTN será de 128 bits (16 bytes)
+    def calcularAUTHN(self, CON_SQN, AMF, MAC, K):
+        AUTN = CON_SQN + AMF + MAC # 48 + 16 + 64 = 128 bits
         return AUTN
         
     def set_IMSI(self, IMSI):
@@ -141,7 +109,7 @@ class Operador:
             self.generate_RAND()
             self.generate_SQN()
             self.AK = self.f5_algorithm(self.K, self.RAND)
-            self.AMF = b'3377331033083315' # Corresponde al IMSI
+            self.AMF = (33).to_bytes(2, byteorder='big') # Corresponde al IMSI
             self.MAC = self.f1_algorithm(self.K, self.SQN, self.RAND, self.AMF)
             
             # XRES
@@ -186,13 +154,15 @@ antena.set_parameters(IMSI, RAND, XRES, AUTHN, CK, IK)
 
 # 4. Se envían RAND y AUTHN->MAC de la antena al móvil
 movil.set_RAND(antena.RAND)
-#movil.set_MAC(antena.AUTHN_MAC)
+movil.set_parameters(antena.AUTHN)
 
 # 5. Se envían RAND y AUTHN->MAC del móvil al UIM
 uim.set_RAND(movil.RAND)
-#uim-set_MAC(movil.AUTHN_MAC)
+uim.set_parameters(movil.AUTHN)
+uim.calc_parameters()
 
 # 6. Se generan todos los parámetros en UIM, y se envían RES, CK e IK al móvil
+
 
 # 7. Se envía RES del móvil a la antena
 
